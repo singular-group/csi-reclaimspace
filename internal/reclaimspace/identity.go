@@ -28,8 +28,7 @@ func (s *identityServer) GetIdentity(_ context.Context, _ *identity.GetIdentityR
 }
 
 // GetCapabilities advertises ReclaimSpace OFFLINE for the controller: the
-// CSI-Addons controller runs the node-side ONLINE operation only when a
-// leader advertises it.
+// CSI-Addons controller fails a job unless a leader advertises it.
 func (s *identityServer) GetCapabilities(_ context.Context, _ *identity.GetCapabilitiesRequest) (*identity.GetCapabilitiesResponse, error) {
 	var caps []*identity.Capability
 	switch s.mode {
