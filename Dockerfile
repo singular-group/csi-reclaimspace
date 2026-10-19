@@ -1,6 +1,6 @@
 # csi-reclaimspace image. Built and pushed by CI on merges to main:
 #   docker build --build-arg VERSION=1.0.0.0 -t csi-reclaimspace .
-FROM golang:1.26.2 AS build
+FROM golang:1.26.9 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
