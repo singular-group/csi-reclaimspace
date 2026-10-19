@@ -1,0 +1,226 @@
+# The README's deployment, minus a real driver: the upstream k8s-sidecar and
+# csi-reclaimspace next to each other in a node DaemonSet and a controller
+# Deployment, plus a static volume "attached" to the kind node. run.sh fills
+# in __IMAGE__ and __NODE__.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: csi-reclaimspace-e2e
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: e2e
+  namespace: csi-reclaimspace-e2e
+---
+# The upstream k8s-sidecar's needs; csi-reclaimspace calls no Kubernetes API.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: csi-reclaimspace-e2e
+rules:
+  - apiGroups: ["csiaddons.openshift.io"]
+    resources: ["csiaddonsnodes"]
+    verbs: ["get", "create", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "persistentvolumes"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: csi-reclaimspace-e2e
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: csi-reclaimspace-e2e
+subjects:
+  - kind: ServiceAccount
+    name: e2e
+    namespace: csi-reclaimspace-e2e
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: e2e-node
+  namespace: csi-reclaimspace-e2e
+spec:
+  selector:
+    matchLabels:
+      app: e2e-node
+  template:
+    metadata:
+      labels:
+        app: e2e-node
+    spec:
+      serviceAccountName: e2e
+      containers:
+        - name: csi-addons
+          image: quay.io/csiaddons/k8s-sidecar:v0.15.1
+          args:
+            - --node-id=$(NODE_NAME)
+            - --stagingpath=/var/lib/kubelet/plugins/kubernetes.io/csi/
+            - --csi-addons-address=/csi/csi-addons.sock
+            - --controller-port=9070
+            - --pod=$(POD_NAME)
+            - --namespace=$(POD_NAMESPACE)
+            - --pod-uid=$(POD_UID)
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+          ports:
+            - name: csi-addons
+              containerPort: 9070
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-reclaimspace
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DRIVER_NAME
+              value: e2e.csi-reclaimspace.test
+            - name: CSI_ADDONS_SOCKET
+              value: /csi/csi-addons.sock
+            - name: MODE
+              value: node
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["SYS_ADMIN", "DAC_READ_SEARCH"]
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: HostToContainer
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-controller
+  namespace: csi-reclaimspace-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-controller
+  template:
+    metadata:
+      labels:
+        app: e2e-controller
+    spec:
+      serviceAccountName: e2e
+      containers:
+        - name: csi-addons
+          image: quay.io/csiaddons/k8s-sidecar:v0.15.1
+          args:
+            - --node-id=$(NODE_NAME)
+            - --csi-addons-address=/csi/csi-addons.sock
+            - --controller-port=9070
+            - --pod=$(POD_NAME)
+            - --namespace=$(POD_NAMESPACE)
+            - --pod-uid=$(POD_UID)
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+          ports:
+            - name: csi-addons
+              containerPort: 9070
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-reclaimspace
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DRIVER_NAME
+              value: e2e.csi-reclaimspace.test
+            - name: CSI_ADDONS_SOCKET
+              value: /csi/csi-addons.sock
+            - name: MODE
+              value: controller
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: csi-reclaimspace-e2e
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  csi:
+    driver: e2e.csi-reclaimspace.test
+    volumeHandle: e2e-volume
+    fsType: ext4
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: e2e
+  namespace: csi-reclaimspace-e2e
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ""
+  volumeName: csi-reclaimspace-e2e
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Stands in for the driver's attacher: the CSI-Addons controller picks the
+# node from an attached VolumeAttachment of the PV.
+apiVersion: storage.k8s.io/v1
+kind: VolumeAttachment
+metadata:
+  name: csi-reclaimspace-e2e
+spec:
+  attacher: e2e.csi-reclaimspace.test
+  nodeName: __NODE__
+  source:
+    persistentVolumeName: csi-reclaimspace-e2e

@@ -18,7 +18,9 @@ staging path — and stays small. New features need a concrete user first.
 - Never trim a path that is not a mount root (as `statx` reports it): an
   unmounted staging path would trim the node's own filesystem.
 - Every behaviour has a test: unit tests beside the code, the real-kernel
-  path in `test/` (`go test -tags functional ./test/`, as root).
+  path in `test/` (`go test -tags functional ./test/`, as root), and the
+  whole chain against the CSI-Addons controller in `test/e2e/run.sh <image>`
+  (docker, kind and kubectl).
 - No references to any particular deployment, company or infrastructure:
   this repo is generic and public.
 

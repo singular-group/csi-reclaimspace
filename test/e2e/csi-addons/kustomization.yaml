@@ -1,0 +1,14 @@
+# The CSI-Addons controller and CRDs, kubernetes-csi-addons v0.15.1 at its
+# release commit; the upstream manifest's image is :latest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/f7f0778d4f532ebfdbade80b693b0c8161520e9c/deploy/controller/crds.yaml
+  - https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/f7f0778d4f532ebfdbade80b693b0c8161520e9c/deploy/controller/rbac.yaml
+  - https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/f7f0778d4f532ebfdbade80b693b0c8161520e9c/deploy/controller/setup-controller.yaml
+  - https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/f7f0778d4f532ebfdbade80b693b0c8161520e9c/deploy/controller/csi-addons-config.yaml
+
+images:
+  - name: quay.io/csiaddons/k8s-controller
+    newTag: v0.15.1
