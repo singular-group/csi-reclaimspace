@@ -1,0 +1,100 @@
+# Pull requests and pushes: vet, unit tests, functional test against a real
+# kernel. Pull requests also prove the image builds. Pushes to main build the
+# image once and publish :<x.y.z.N> and :latest.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel a publish half-way (version pushed, :latest not yet).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet -tags functional ./...
+      - run: go test -race ./...
+      # Loop device, mount and FITRIM need root.
+      - run: sudo env "PATH=$PATH" "HOME=$HOME" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" go test -tags functional -count=1 -v ./test/
+      - if: github.event_name == 'pull_request'
+        run: docker build .
+
+  publish:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version counts commits since the x.y.z tag: full history and tags.
+          fetch-depth: 0
+      - name: Derive the version
+        run: |
+          set -eo pipefail
+          [ "$(git rev-parse --is-shallow-repository)" = "false" ] || { echo "ERROR: shallow clone — the commit count would be wrong (fetch-depth: 0)" >&2; exit 1; }
+          # <x.y.z tag>.<commits since it>, counted at the last commit that changed
+          # the image, so a docs-only merge keeps the same version.
+          IMAGE_COMMIT=$(git log -1 --format=%H -- main.go internal go.mod go.sum Dockerfile ':(exclude)*_test.go')
+          [ -n "$IMAGE_COMMIT" ] || { echo "ERROR: no commit in this history touches the image sources" >&2; exit 1; }
+          # --exclude: a four-component tag would give a five-component version.
+          TAG=$(git describe --tags --abbrev=0 --match '[0-9]*.[0-9]*.[0-9]*' --exclude '*.*.*.*' "$IMAGE_COMMIT" 2>/dev/null) || {
+            echo "ERROR: no x.y.z tag reachable from $IMAGE_COMMIT. Create the baseline: git tag -a 1.0.0 -m 'Baseline for derived image versions' <commit> && git push origin 1.0.0" >&2
+            exit 1
+          }
+          case "$TAG" in *[!0-9.]*|*..*) echo "ERROR: tag '$TAG' is not x.y.z with numeric parts" >&2; exit 1 ;; esac
+          VERSION="$TAG.$(git rev-list --count "$TAG..$IMAGE_COMMIT")"
+          echo "image version $VERSION, from $(git log -1 --format='%h %s' "$IMAGE_COMMIT")"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        run: |
+          set -eo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # :latest follows the tip of main only: a re-run of an older commit
+          # must not move it back.
+          TIP=$(git ls-remote origin refs/heads/main | cut -f1)
+          # Published versions are never overwritten, so any answer other than
+          # "absent" stops the job. Absent: "manifest unknown" (new tag) or
+          # "denied" (package not created yet; a token that cannot read it
+          # cannot push to it either).
+          if out=$(docker manifest inspect "$IMAGE:$VERSION" 2>&1); then
+            echo "$IMAGE:$VERSION is already published"
+            if [ "$TIP" = "$GITHUB_SHA" ]; then
+              # Heals a :latest left behind by a run that failed after the
+              # version push; an exact copy, so a current :latest is unchanged.
+              docker buildx imagetools create --prefer-index=false --tag "$IMAGE:latest" "$IMAGE:$VERSION"
+            fi
+            exit 0
+          fi
+          case "$out" in
+            *"manifest unknown"*|*"denied"*) ;;
+            *) echo "ERROR: cannot tell whether $IMAGE:$VERSION exists: $out" >&2; exit 1 ;;
+          esac
+          docker build --build-arg VERSION="$VERSION" \
+            --label org.opencontainers.image.version="$VERSION" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$VERSION"
+          if [ "$TIP" = "$GITHUB_SHA" ]; then
+            docker push "$IMAGE:latest"
+          fi
