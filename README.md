@@ -1,7 +1,8 @@
 # csi-ReclaimSpace
 
 A sidecar that lets [CSI-Addons](https://github.com/csi-addons/kubernetes-csi-addons)
-`ReclaimSpaceJob`s trim the filesystem volumes of any CSI driver.
+`ReclaimSpaceJob`s trim the filesystem volumes of any CSI driver that attaches
+and stages them.
 
 ## Why it exists
 
@@ -26,8 +27,18 @@ CSI-Addons controller ──TLS──▶ k8s-sidecar ──unix socket──▶ 
   filesystem, and it runs one trim per volume at a time. Block volumes are not
   supported.
 - `MODE=controller`, next to the driver's controller plugin: advertises
-  ReclaimSpace OFFLINE, which the CSI-Addons controller requires from a leader
-  before it runs any job. It never trims.
+  ReclaimSpace OFFLINE. After the node-side trim the CSI-Addons controller
+  calls the driver's controller side through a leader, and fails the job if no
+  leader advertises OFFLINE. It never trims.
+
+The CSI-Addons controller finds the volume's node from the PV's attached
+VolumeAttachment, and the `k8s-sidecar` sends its staging path
+(`<stagingpath>/<driver>/<sha256(volumeHandle)>/globalmount`). So the driver
+must use VolumeAttachments (`attachRequired: true`) and stage its volumes
+(`NodeStageVolume`), as most block-storage drivers do. Without a staging step
+nothing is mounted at that path and the trim is refused. Without a
+VolumeAttachment, as for a PVC no pod uses, the controller skips the node and
+the job reports success without trimming.
 
 ## Deploy
 
@@ -104,8 +115,9 @@ its upstream RBAC bound to the driver's service accounts: CSIAddonsNode
 get/create/update/watch, Pod and ReplicaSet get, PersistentVolume get,
 TokenReview create, Secret get for volumes with a `nodeStageSecretRef`, and,
 for the controller-side one, which elects a leader, Leases
-get/list/watch/create/update/delete in its namespace (CSI controllers usually
-grant these already). `csi-reclaimspace` calls no Kubernetes API.
+get/list/watch/create/update/delete and Events create/patch in its namespace
+(CSI controllers usually grant these already). `csi-reclaimspace` calls no
+Kubernetes API.
 
 | Variable | Meaning |
 |---|---|
@@ -156,6 +168,8 @@ it. `:latest` follows `main`.
 
 ## Status
 
-Tested in CI against a real kernel (loop-device ext4, FITRIM through the gRPC
-API, with only the documented capabilities). Built against the
-kubernetes-csi-addons v0.15.1 API.
+Tested in CI on every change: against a real kernel (loop-device ext4, FITRIM
+through the gRPC API, with only the documented capabilities), and end to end
+against the CSI-Addons controller in a kind cluster, where a `ReclaimSpaceJob`
+must succeed and free the deleted blocks (`test/e2e/run.sh`). Built against
+the kubernetes-csi-addons v0.15.1 API.
