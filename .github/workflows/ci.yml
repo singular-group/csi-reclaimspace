@@ -1,6 +1,6 @@
 # Pull requests and pushes: vet, unit tests, functional test against a real
-# kernel. Pull requests also prove the image builds. Pushes to main build the
-# image once and publish :<x.y.z.N> and :latest.
+# kernel, end-to-end test against the CSI-Addons controller in kind. Pushes to
+# main then build the image once and publish :<x.y.z.N> and :latest.
 name: ci
 
 on:
@@ -28,12 +28,23 @@ jobs:
       - run: go test -race ./...
       # Loop device, mount and FITRIM need root.
       - run: sudo env "PATH=$PATH" "HOME=$HOME" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" go test -tags functional -count=1 -v ./test/
-      - if: github.event_name == 'pull_request'
-        run: docker build .
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+          version: v0.33.0
+          kubectl_version: v1.37.1
+      - run: docker build -t csi-reclaimspace:e2e .
+      - run: test/e2e/run.sh csi-reclaimspace:e2e
 
   publish:
     if: github.event_name == 'push'
-    needs: test
+    needs: [test, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read
