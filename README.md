@@ -81,7 +81,7 @@ the DaemonSet's existing volumes):
     - name: socket-dir
       mountPath: /csi
 - name: csi-reclaimspace
-  image: ghcr.io/thegc0rp/csi-reclaimspace:<version>
+  image: ghcr.io/singular-group/csi-reclaimspace:<version>
   env:
     - name: DRIVER_NAME
       value: cinder.csi.openstack.org
@@ -161,7 +161,7 @@ on the StorageClass to delete the scheduled jobs.
 
 ## Versions
 
-Images are `ghcr.io/thegc0rp/csi-reclaimspace:<x.y.z.N>`: `x.y.z` is the
+Images are `ghcr.io/singular-group/csi-reclaimspace:<x.y.z.N>`: `x.y.z` is the
 latest release tag and `N` the number of commits from it up to the last one
 that changed the image. Each version is built once and never overwritten; pin
 it. `:latest` follows `main`.
