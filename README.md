@@ -11,8 +11,8 @@ volume discards them. Most CSI drivers do not mount with `discard`, and the
 node's `fstrim.timer` only covers `/etc/fstab`, so deleted data stays allocated
 on the array. CSI-Addons schedules and reports a reclaim per PVC, but it needs
 the driver to serve the CSI-Addons API — and most drivers don't.
-`csi-reclaimspace` serves that API next to the driver, so the driver image
-stays untouched.
+`csi-reclaimspace` serves that API in pods of its own beside the driver, so the
+driver's image and manifests stay untouched.
 
 ## How it works
 
@@ -21,15 +21,15 @@ CSI-Addons controller ──TLS──▶ k8s-sidecar ──unix socket──▶ 
    (ReclaimSpaceJob)          (upstream)                   (this image)
 ```
 
-- `MODE=node`, next to the driver's node plugin: advertises ReclaimSpace
-  ONLINE and runs `FITRIM` on the volume's staging path. It refuses any path
-  that is not a mount root, so an unmounted volume never trims the node's own
-  filesystem, and it runs one trim per volume at a time. Block volumes are not
-  supported.
+- `MODE=node`, in a DaemonSet of its own on the driver's nodes: advertises
+  ReclaimSpace ONLINE and runs `FITRIM` on the volume's staging path. It
+  refuses any path that is not a mount root, so an unmounted volume never trims
+  the node's own filesystem, and it runs one trim per volume at a time. Block
+  volumes are not supported.
 - `MODE=controller`, in a one-pod Deployment of its own: advertises
   ReclaimSpace OFFLINE. After the node-side trim the CSI-Addons controller
   calls the driver's controller side through a leader, and fails the job if no
-  leader advertises OFFLINE. It never trims and needs no driver socket.
+  leader advertises OFFLINE. It never trims.
 
 The CSI-Addons controller finds the volume's node from the PV's attached
 VolumeAttachment, and the `k8s-sidecar` sends its staging path
@@ -46,13 +46,14 @@ Prerequisites: Linux 5.8+ nodes (the mount-root check uses `statx`'s
 `STATX_ATTR_MOUNT_ROOT`) and the CSI-Addons controller and CRDs
 ([kubernetes-csi-addons](https://github.com/csi-addons/kubernetes-csi-addons/tree/main/deploy/controller)).
 
-Add two containers to the driver's node plugin DaemonSet: the upstream
-`k8s-sidecar` and `csi-reclaimspace`. They share a socket, and
-`csi-reclaimspace` must see the kubelet's mounts at the same path as the host.
-Example with the OpenStack Cinder driver (`socket-dir` and `kubelet-dir` are
-the DaemonSet's existing volumes):
+Run two containers as a DaemonSet of their own, with the driver node plugin's
+tolerations: the upstream `k8s-sidecar` and `csi-reclaimspace`. They share a
+socket, and `csi-reclaimspace` must see the kubelet's staging mounts at the
+same path as the host. Neither calls the driver, so they need no place in its
+pods. Example pod spec with the OpenStack Cinder driver:
 
 ```yaml
+containers:
 - name: csi-addons
   image: quay.io/csiaddons/k8s-sidecar:v0.15.1
   args:
@@ -73,8 +74,6 @@ the DaemonSet's existing volumes):
     - name: POD_UID
       valueFrom: {fieldRef: {fieldPath: metadata.uid}}
   ports:
-    # A host-network node plugin binds it on the node: pick a free port and
-    # set it in both --controller-port and containerPort.
     - name: csi-addons
       containerPort: 9070
   volumeMounts:
@@ -100,28 +99,37 @@ the DaemonSet's existing volumes):
   volumeMounts:
     - name: socket-dir
       mountPath: /csi
-    - name: kubelet-dir
-      mountPath: /var/lib/kubelet
+    - name: staging
+      mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi
       mountPropagation: HostToContainer
       readOnly: true
+volumes:
+- name: socket-dir
+  emptyDir: {}
+- name: staging
+  hostPath:
+    path: /var/lib/kubelet/plugins/kubernetes.io/csi
+    type: DirectoryOrCreate
 ```
 
 Run the same pair as a Deployment of its own with one replica and the
 `Recreate` strategy: `MODE=controller` for `csi-reclaimspace`, no
-`--stagingpath` for `k8s-sidecar`, an `emptyDir` for the socket, and neither
-the kubelet mount nor any added capability. Keep it out of a multi-replica
-controller plugin: the `k8s-sidecar` names its `CSIAddonsNode` after the node
-and the Deployment, so two pods on one node share it, and the CSI-Addons
-controller then fails to find the leader's connection.
+`--stagingpath` for `k8s-sidecar`, and neither the staging mount nor any added
+capability. Keep it out of a multi-replica controller plugin: the `k8s-sidecar`
+names its `CSIAddonsNode` after the node and the Deployment, so two pods on one
+node share it, and the CSI-Addons controller then fails to find the leader's
+connection.
 
 `DRIVER_NAME` must be the CSI driver's name (`kubectl get csidrivers`): the
 `k8s-sidecar` registers the `CSIAddonsNode` under it. Each `k8s-sidecar` needs
-its upstream RBAC, bound to the node plugin's service account and to the
-controller Deployment's own: CSIAddonsNode get/create/update/watch, Pod and
-ReplicaSet get, PersistentVolume get, TokenReview create, Secret get for
-volumes with a `nodeStageSecretRef`, and, for the controller side, which elects
-a leader, Leases get/list/watch/create/update/delete and Events create/patch in
-its namespace. `csi-reclaimspace` calls no Kubernetes API.
+this RBAC, bound to the service accounts of both workloads: CSIAddonsNode
+get/create/update/watch, Pod and ReplicaSet get, PersistentVolume get,
+TokenReview create, Secret get for volumes with a `nodeStageSecretRef`, and,
+for the controller side, which elects a leader, Leases create (RBAC cannot
+limit it by name) and get/update on its own lease (the driver name with every
+character outside `[a-zA-Z0-9-]` replaced by `-`, plus `-csi-addons`), and
+Events create/patch in its namespace. `csi-reclaimspace` calls no Kubernetes
+API.
 
 | Variable | Meaning |
 |---|---|
