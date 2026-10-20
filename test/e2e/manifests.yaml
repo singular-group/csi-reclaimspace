@@ -129,6 +129,8 @@ metadata:
   namespace: csi-reclaimspace-e2e
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: e2e-controller
