@@ -90,7 +90,7 @@ the DaemonSet's existing volumes):
     - name: MODE
       value: node
   securityContext:
-    # FITRIM needs SYS_ADMIN; DAC_READ_SEARCH opens volume roots an app
+    # FITRIM needs SYS_ADMIN; DAC_READ_SEARCH opens volume roots that an app
     # chowned to itself with mode 0700.
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
@@ -103,6 +103,7 @@ the DaemonSet's existing volumes):
     - name: kubelet-dir
       mountPath: /var/lib/kubelet
       mountPropagation: HostToContainer
+      readOnly: true
 ```
 
 Run the same pair as a Deployment of its own with one replica and the
