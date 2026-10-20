@@ -33,7 +33,11 @@ rules:
     verbs: ["create"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["e2e-csi-reclaimspace-test-csi-addons"]
+    verbs: ["get", "update"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
@@ -111,17 +115,17 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-            - name: kubelet-dir
-              mountPath: /var/lib/kubelet
+            - name: staging
+              mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi
               mountPropagation: HostToContainer
               readOnly: true
       volumes:
         - name: socket-dir
           emptyDir: {}
-        - name: kubelet-dir
+        - name: staging
           hostPath:
-            path: /var/lib/kubelet
-            type: Directory
+            path: /var/lib/kubelet/plugins/kubernetes.io/csi
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
