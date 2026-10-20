@@ -26,10 +26,10 @@ CSI-Addons controller ──TLS──▶ k8s-sidecar ──unix socket──▶ 
   that is not a mount root, so an unmounted volume never trims the node's own
   filesystem, and it runs one trim per volume at a time. Block volumes are not
   supported.
-- `MODE=controller`, next to the driver's controller plugin: advertises
+- `MODE=controller`, in a one-pod Deployment of its own: advertises
   ReclaimSpace OFFLINE. After the node-side trim the CSI-Addons controller
   calls the driver's controller side through a leader, and fails the job if no
-  leader advertises OFFLINE. It never trims.
+  leader advertises OFFLINE. It never trims and needs no driver socket.
 
 The CSI-Addons controller finds the volume's node from the PV's attached
 VolumeAttachment, and the `k8s-sidecar` sends its staging path
@@ -105,19 +105,22 @@ the DaemonSet's existing volumes):
       mountPropagation: HostToContainer
 ```
 
-Add the same pair to the controller plugin Deployment, with `MODE=controller`
-for `csi-reclaimspace`, no `--stagingpath` for `k8s-sidecar`, and neither the
-kubelet mount nor any added capability: the controller side never trims.
+Run the same pair as a Deployment of its own with one replica and the
+`Recreate` strategy: `MODE=controller` for `csi-reclaimspace`, no
+`--stagingpath` for `k8s-sidecar`, an `emptyDir` for the socket, and neither
+the kubelet mount nor any added capability. Keep it out of a multi-replica
+controller plugin: the `k8s-sidecar` names its `CSIAddonsNode` after the node
+and the Deployment, so two pods on one node share it, and the CSI-Addons
+controller then fails to find the leader's connection.
 
 `DRIVER_NAME` must be the CSI driver's name (`kubectl get csidrivers`): the
-`k8s-sidecar` registers the `CSIAddonsNode` under it. The `k8s-sidecar` needs
-its upstream RBAC bound to the driver's service accounts: CSIAddonsNode
-get/create/update/watch, Pod and ReplicaSet get, PersistentVolume get,
-TokenReview create, Secret get for volumes with a `nodeStageSecretRef`, and,
-for the controller-side one, which elects a leader, Leases
-get/list/watch/create/update/delete and Events create/patch in its namespace
-(CSI controllers usually grant these already). `csi-reclaimspace` calls no
-Kubernetes API.
+`k8s-sidecar` registers the `CSIAddonsNode` under it. Each `k8s-sidecar` needs
+its upstream RBAC, bound to the node plugin's service account and to the
+controller Deployment's own: CSIAddonsNode get/create/update/watch, Pod and
+ReplicaSet get, PersistentVolume get, TokenReview create, Secret get for
+volumes with a `nodeStageSecretRef`, and, for the controller side, which elects
+a leader, Leases get/list/watch/create/update/delete and Events create/patch in
+its namespace. `csi-reclaimspace` calls no Kubernetes API.
 
 | Variable | Meaning |
 |---|---|
