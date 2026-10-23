@@ -184,5 +184,5 @@ it. `:latest` follows `main`.
 Tested in CI on every change: against a real kernel (loop-device ext4, FITRIM
 through the gRPC API, with only the documented capabilities), and end to end
 against the CSI-Addons controller in a kind cluster, where a `ReclaimSpaceJob`
-must succeed and free the deleted blocks (`test/e2e/run.sh`). Built against
-the kubernetes-csi-addons v0.15.1 API.
+must succeed and free the deleted blocks and a block volume's job must fail
+(`test/e2e/run.sh`). Built against the kubernetes-csi-addons v0.15.1 API.
