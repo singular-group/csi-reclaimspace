@@ -44,7 +44,9 @@ kubectl apply --server-side -k "$HERE/csi-addons"
 kubectl -n csi-addons-system rollout status deploy/csi-addons-controller-manager --timeout=180s
 
 sed -e "s|__IMAGE__|$IMAGE|g" -e "s|__NODE__|$NODE|g" "$HERE/manifests.yaml" | kubectl apply -f -
-kubectl patch volumeattachment csi-reclaimspace-e2e --subresource=status --type=merge -p '{"status":{"attached":true}}'
+for va in csi-reclaimspace-e2e csi-reclaimspace-e2e-block; do
+  kubectl patch volumeattachment $va --subresource=status --type=merge -p '{"status":{"attached":true}}'
+done
 kubectl -n "$NS" rollout status ds/e2e-node --timeout=180s
 kubectl -n "$NS" rollout status deploy/e2e-controller --timeout=180s
 
@@ -62,7 +64,7 @@ before=$(node "stat -c %b /var/e2e/vol.img")
 
 # Without the bound PVC or the leader's lease the controller fails a job at
 # once; without the node's CSIAddonsNode it retries for minutes. Wait for all.
-kubectl -n "$NS" wait pvc/e2e --for=jsonpath='{.status.phase}'=Bound --timeout=60s
+kubectl -n "$NS" wait pvc/e2e pvc/e2e-block --for=jsonpath='{.status.phase}'=Bound --timeout=60s
 for _ in $(seq 60); do
   [ "$(kubectl -n "$NS" get csiaddonsnode -o name | wc -l)" -eq 2 ] && break
   sleep 2
@@ -99,4 +101,24 @@ echo "backing file: $((before * 512 / 1048576)) MiB -> $((after * 512 / 1048576)
 [ "$freed" -ge 150 ] || { echo "ERROR: want at least 150 MiB freed" >&2; false; }
 node "md5sum -c --quiet /var/e2e/keep.md5"
 node "umount $stage && e2fsck -fn /var/e2e/vol.img >/dev/null"
-echo "PASS: ReclaimSpaceJob succeeded end to end and FITRIM freed the deleted blocks"
+
+# A block volume has no filesystem to trim, so its job must fail rather than
+# report a success that trimmed nothing. backOffLimit 0 skips the retries.
+kubectl apply -f - <<EOF
+apiVersion: csiaddons.openshift.io/v1alpha1
+kind: ReclaimSpaceJob
+metadata:
+  name: e2e-block
+  namespace: $NS
+spec:
+  backOffLimit: 0
+  target:
+    persistentVolumeClaim: e2e-block
+EOF
+kubectl -n "$NS" wait reclaimspacejob/e2e-block --for=jsonpath='{.status.completionTime}' --timeout=300s
+result=$(kubectl -n "$NS" get reclaimspacejob/e2e-block -o jsonpath='{.status.result}')
+reason=$(kubectl -n "$NS" get reclaimspacejob/e2e-block -o jsonpath='{.status.conditions[*].message}')
+echo "block ReclaimSpaceJob: $result: $reason"
+[ "$result" = Failed ] || { echo "ERROR: a block volume's job did not fail" >&2; false; }
+case "$reason" in *"not supported for block volumes"*) ;; *) echo "ERROR: the failure does not say why" >&2; false ;; esac
+echo "PASS: ReclaimSpaceJob succeeded end to end, FITRIM freed the deleted blocks, and a block volume's job failed"

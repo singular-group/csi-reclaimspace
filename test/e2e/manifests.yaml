@@ -231,3 +231,43 @@ spec:
   nodeName: __NODE__
   source:
     persistentVolumeName: csi-reclaimspace-e2e
+---
+# A block volume: no filesystem, so its job must fail instead of succeeding.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: csi-reclaimspace-e2e-block
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Block
+  csi:
+    driver: e2e.csi-reclaimspace.test
+    volumeHandle: e2e-block-volume
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: e2e-block
+  namespace: csi-reclaimspace-e2e
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ""
+  volumeMode: Block
+  volumeName: csi-reclaimspace-e2e-block
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: storage.k8s.io/v1
+kind: VolumeAttachment
+metadata:
+  name: csi-reclaimspace-e2e-block
+spec:
+  attacher: e2e.csi-reclaimspace.test
+  nodeName: __NODE__
+  source:
+    persistentVolumeName: csi-reclaimspace-e2e-block
