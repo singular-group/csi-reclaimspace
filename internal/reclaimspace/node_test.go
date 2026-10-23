@@ -30,7 +30,7 @@ func TestNodeReclaimSpace(t *testing.T) {
 		wantTrimOn string // "" = trim must not be called
 	}{
 		{"missing volume id", &reclaimspace.NodeReclaimSpaceRequest{StagingTargetPath: "/stage"}, nil, codes.InvalidArgument, ""},
-		{"block volume", &reclaimspace.NodeReclaimSpaceRequest{VolumeId: "v", StagingTargetPath: "/stage", VolumeCapability: blockCap}, nil, codes.Unimplemented, ""},
+		{"block volume", &reclaimspace.NodeReclaimSpaceRequest{VolumeId: "v", StagingTargetPath: "/stage", VolumeCapability: blockCap}, nil, codes.InvalidArgument, ""},
 		{"no paths", &reclaimspace.NodeReclaimSpaceRequest{VolumeId: "v"}, nil, codes.InvalidArgument, ""},
 		{"staging path wins", &reclaimspace.NodeReclaimSpaceRequest{VolumeId: "v", StagingTargetPath: "/stage", VolumePath: "/pub", VolumeCapability: mountCap}, nil, codes.OK, "/stage"},
 		{"falls back to volume path", &reclaimspace.NodeReclaimSpaceRequest{VolumeId: "v", VolumePath: "/pub"}, nil, codes.OK, "/pub"},

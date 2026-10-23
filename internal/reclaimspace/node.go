@@ -24,8 +24,9 @@ func (s *nodeServer) NodeReclaimSpace(_ context.Context, req *reclaimspace.NodeR
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume ID missing in request")
 	}
+	// Not Unimplemented: the CSI-Addons controller counts that as success.
 	if req.GetVolumeCapability().GetBlock() != nil {
-		return nil, status.Error(codes.Unimplemented, "reclaim space is not supported for block volumes")
+		return nil, status.Error(codes.InvalidArgument, "reclaim space is not supported for block volumes: there is no filesystem to trim")
 	}
 	path := req.GetStagingTargetPath()
 	if path == "" {
