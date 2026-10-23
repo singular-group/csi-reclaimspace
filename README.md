@@ -24,8 +24,9 @@ CSI-Addons controller ──TLS──▶ k8s-sidecar ──unix socket──▶ 
 - `MODE=node`, in a DaemonSet of its own on the driver's nodes: advertises
   ReclaimSpace ONLINE and runs `FITRIM` on the volume's staging path. It
   refuses any path that is not a mount root, so an unmounted volume never trims
-  the node's own filesystem, and it runs one trim per volume at a time. Block
-  volumes are not supported.
+  the node's own filesystem, and it runs one trim per volume at a time. A block
+  volume fails its job: it has no filesystem to trim, and answering
+  `Unimplemented` would make the CSI-Addons controller report a success.
 - `MODE=controller`, in a one-pod Deployment of its own: advertises
   ReclaimSpace OFFLINE. After the node-side trim the CSI-Addons controller
   calls the driver's controller side through a leader, and fails the job if no
